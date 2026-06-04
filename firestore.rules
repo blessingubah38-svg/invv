@@ -7,44 +7,52 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Users Collection rules: Users can read and write only their own profiles
+    // Users Collection rules: Users can read and write only their own profiles.
+    // Permanent deletion of admin overrides.
     match /users/{userId} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow write: if isSignedIn() && (request.auth.uid == userId || isAdmin()) && isValidUser(request.resource.data);
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create, update: if isSignedIn() && request.auth.uid == userId && isValidUser(request.resource.data);
+      allow delete: if false;
 
       match /withdrawals/{withdrawalId} {
-        allow read, write: if isSignedIn() && (userId == request.auth.uid || isAdmin());
+        allow read, write: if isSignedIn() && userId == request.auth.uid;
       }
     }
 
     // Deposits Collection rules: Relational checks against resource data
     match /deposits/{depositId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && (request.resource.data.userId == request.auth.uid || isAdmin()) && isValidDepositRecord(request.resource.data);
-      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin()) && isValidDepositRecord(request.resource.data);
-      allow delete: if isSignedIn() && isAdmin();
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidDepositRecord(request.resource.data);
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && isValidDepositRecord(request.resource.data);
+      allow delete: if false;
     }
 
     // Withdrawals Collection rules: Secure queries validation
     match /withdrawals/{withdrawalId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && (request.resource.data.userId == request.auth.uid || isAdmin()) && isValidWithdrawalRecord(request.resource.data);
-      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin()) && isValidWithdrawalRecord(request.resource.data);
-      allow delete: if isSignedIn() && isAdmin();
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidWithdrawalRecord(request.resource.data);
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && isValidWithdrawalRecord(request.resource.data);
+      allow delete: if false;
     }
 
     // Transactions Collection rules: every financial action log
     match /transactions/{transactionId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && (request.resource.data.userId == request.auth.uid || isAdmin()) && isValidTransactionRecord(request.resource.data);
-      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin()) && isValidTransactionRecord(request.resource.data);
-      allow delete: if isSignedIn() && isAdmin();
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidTransactionRecord(request.resource.data);
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && isValidTransactionRecord(request.resource.data);
+      allow delete: if false;
     }
 
-    // Dynamic Plans Collection rules
+    // Dynamic Plans Collection rules: Read-only for everyone, disabled admin editing/creation
     match /plans/{planId} {
-      allow read: if isSignedIn();
-      allow write, delete: if isAdmin() && isValidPlan(request.resource.data);
+      allow read: if true;
+      allow write, delete: if false;
+    }
+
+    // Global Settings matches: Read-only for everyone, disabled admin editing
+    match /settings/{settingsId} {
+      allow read: if true;
+      allow write: if false;
     }
 
     // Helper functions
@@ -53,9 +61,13 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == "blessingubah38@gmail.com"
-      );
+      return false;
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll(['id'])
+             && data.id is string
+             && data.id.size() <= 128;
     }
 
     function isValidPlan(data) {
@@ -75,23 +87,11 @@ service cloud.firestore {
              && data.uid is string
              && data.uid.size() <= 128
              && data.username is string 
-             && data.username.size() <= 100
+             && data.username.size() <= 128
              && data.fullName is string 
-             && data.fullName.size() <= 100
+             && data.fullName.size() <= 128
              && data.email is string 
-             && data.email.size() <= 100
-             && (!('accountBalance' in data) || data.accountBalance is number)
-             && (!('earnedTotal' in data) || data.earnedTotal is number)
-             && (!('pendingWithdrawal' in data) || data.pendingWithdrawal is number)
-             && (!('totalWithdrew' in data) || data.totalWithdrew is number)
-             && (!('activeDeposit' in data) || data.activeDeposit is number)
-             && (!('lastDeposit' in data) || data.lastDeposit is number)
-             && (!('totalDeposit' in data) || data.totalDeposit is number)
-             && (!('lastWithdrawal' in data) || data.lastWithdrawal is string)
-             && (!('usdtTrc20' in data) || data.usdtTrc20 is string)
-             && (!('bitcoin' in data) || data.bitcoin is string)
-             && (!('ethereum' in data) || data.ethereum is string)
-             && (!('usdtErc20' in data) || data.usdtErc20 is string);
+             && data.email.size() <= 128;
     }
 
     function isValidDepositRecord(data) {

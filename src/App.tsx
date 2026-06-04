@@ -23,7 +23,8 @@ import {
   addTransactionRecord,
   getUserTransactions,
   updateTransactionStatus,
-  isFirebaseReady
+  isFirebaseReady,
+  syncLocalDataToFirebase
 } from './services/db';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
@@ -56,7 +57,24 @@ const ASSETS_IMAGES = {
 };
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('Home');
+  const [currentPage, setCurrentPage] = useState<Page>(() => {
+    const path = window.location.pathname.toLowerCase();
+    const hash = window.location.hash.toLowerCase();
+    if (path.includes('/dashboard') || hash.includes('dashboard')) {
+      return 'Dashboard';
+    } else if (path.includes('/deposit') || hash.includes('deposit')) {
+      return 'Deposit';
+    } else if (path.includes('/about') || hash.includes('about')) {
+      return 'About';
+    } else if (path.includes('/faqs') || hash.includes('faqs')) {
+      return 'FAQs';
+    } else if (path.includes('/news') || hash.includes('news')) {
+      return 'News';
+    } else if (path.includes('/register') || hash.includes('register')) {
+      return 'Register';
+    }
+    return 'Home';
+  });
   const [dashboardSection, setDashboardSection] = useState<string>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [deposits, setDeposits] = useState<Deposit[]>([]);
@@ -460,7 +478,47 @@ export default function App() {
   const handlePageChange = (page: Page) => {
     setCurrentPage(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    
+    const lowPage = page.toLowerCase();
+    let urlPath = '/';
+    if (page !== 'Home') {
+      urlPath = `/${lowPage}`;
+    }
+    
+    if (window.location.pathname !== urlPath && !window.location.hash) {
+      window.history.pushState({ page }, '', urlPath);
+    }
   };
+
+  // Listen back/forward and typed URL entries for /admin.php, /dashboard etc.
+  useEffect(() => {
+    const handleLocationRouting = () => {
+      const path = window.location.pathname.toLowerCase();
+      const hash = window.location.hash.toLowerCase();
+      
+      if (path.includes('/dashboard') || hash.includes('dashboard')) {
+        setCurrentPage('Dashboard');
+      } else if (path.includes('/deposit') || hash.includes('deposit')) {
+        setCurrentPage('Deposit');
+      } else if (path.includes('/about') || hash.includes('about')) {
+        setCurrentPage('About');
+      } else if (path.includes('/faqs') || hash.includes('faqs')) {
+        setCurrentPage('FAQs');
+      } else if (path.includes('/news') || hash.includes('news')) {
+        setCurrentPage('News');
+      } else if (path.includes('/register') || hash.includes('register')) {
+        setCurrentPage('Register');
+      }
+    };
+
+    window.addEventListener('popstate', handleLocationRouting);
+    window.addEventListener('hashchange', handleLocationRouting);
+    
+    return () => {
+      window.removeEventListener('popstate', handleLocationRouting);
+      window.removeEventListener('hashchange', handleLocationRouting);
+    };
+  }, []);
 
   const handleRegisterSuccess = (updatedFields: Partial<UserState>) => {
     setUser((prev) => ({
@@ -507,6 +565,10 @@ export default function App() {
               uid: firebaseUser.uid,
               isLoggedIn: true
             });
+            // Automatically push any local transaction/profile data up to the newly configured Firebase
+            if (isFirebaseReady) {
+              syncLocalDataToFirebase(firebaseUser.uid, profile.username || '').catch(console.error);
+            }
           }
         } catch (err) {
           console.error("Auth restore error: ", err);

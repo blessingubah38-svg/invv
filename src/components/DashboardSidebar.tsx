@@ -27,7 +27,14 @@ interface SidebarProps {
   onClose?: () => void;
 }
 
-export default function DashboardSidebar({ activeSection, onSectionChange, onLogout, username, isOpen = false, onClose }: SidebarProps) {
+export default function DashboardSidebar({ 
+  activeSection, 
+  onSectionChange, 
+  onLogout, 
+  username, 
+  isOpen = false, 
+  onClose
+}: SidebarProps) {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} /> },
     { id: 'make-deposit', label: 'Make Deposit', icon: <Wallet size={16} /> },
@@ -43,7 +50,6 @@ export default function DashboardSidebar({ activeSection, onSectionChange, onLog
     { id: 'tell-a-friend', label: 'Tell A Friend', icon: <Share2 size={16} /> },
     { id: 'security', label: 'Security', icon: <ShieldCheck size={16} /> },
     { id: 'edit-profile', label: 'Edit Profile', icon: <UserCog size={16} /> },
-    { id: 'admin-controls', label: 'Admin Controls', icon: <ShieldAlert size={16} /> },
   ];
 
   return (
@@ -119,7 +125,8 @@ export default function DashboardSidebar({ activeSection, onSectionChange, onLog
       </nav>
 
       {/* Logout button at footer of sidebar */}
-      <div className="p-4 border-t border-[#10253f] bg-[#07101c]">
+      <div className="p-4 border-t border-[#10253f] bg-[#07101c] flex flex-col gap-2">
+
         <button
           onClick={onLogout}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold uppercase tracking-wider text-red-400 hover:text-white hover:bg-red-500/10 transition-colors cursor-pointer"

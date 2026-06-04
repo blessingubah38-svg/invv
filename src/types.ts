@@ -1,4 +1,4 @@
-export type Page = 'Home' | 'About' | 'FAQs' | 'Register' | 'Dashboard' | 'Deposit' | 'Admin' | 'News';
+export type Page = 'Home' | 'About' | 'FAQs' | 'Register' | 'Dashboard' | 'Deposit' | 'News';
 
 export interface Deposit {
   id?: string;

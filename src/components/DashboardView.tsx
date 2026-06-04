@@ -9,7 +9,8 @@ import {
   getAllTransactions,
   getAllUsers,
   addInvestmentPlan,
-  getInvestmentPlans
+  getInvestmentPlans,
+  getSystemSettings
 } from '../services/db';
 import { 
   Bell, 
@@ -113,25 +114,40 @@ export default function DashboardView({
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [isCopyingAddress, setIsCopyingAddress] = useState(false);
 
+  // Dynamic system settings container
+  const [liveSystemSettings, setLiveSystemSettings] = useState<any>(null);
+
+  React.useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const settings = await getSystemSettings();
+        setLiveSystemSettings(settings);
+      } catch (err) {
+        console.error("Failed to load dynamic system settings in user view: ", err);
+      }
+    };
+    fetchSettings();
+  }, [activeSection]);
+
   // Dynamic receiving wallet registry of the company
   const COMPANY_WALLET_ADDRESSES: Record<string, { address: string; network: string; fullName: string }> = {
     usdt_trc20: {
-      address: 'TXtF7rG8p9WKmQz6SJy8L7pG4bXnQwE9Tr',
+      address: liveSystemSettings?.usdt_trc20_address || 'TXtF7rG8p9WKmQz6SJy8L7pG4bXnQwE9Tr',
       network: 'TRON (TRC20)',
       fullName: 'Tether USD TRC-20'
     },
     btc: {
-      address: '1ChibuikeBtcReceiveAddressGzN6SZy8L7',
+      address: liveSystemSettings?.btc_address || '1ChibuikeBtcReceiveAddressGzN6SZy8L7',
       network: 'Bitcoin Mainnet',
       fullName: 'Bitcoin (BTC)'
     },
     eth: {
-      address: '0x32165eChibuikeReceiveEthab88b098defB5',
+      address: liveSystemSettings?.eth_address || '0x32165eChibuikeReceiveEthab88b098defB5',
       network: 'Ethereum (ERC20)',
       fullName: 'Ethereum (ETH)'
     },
     usdt_erc20: {
-      address: '0x32165eChibuikeReceiveEthab88b098defB5',
+      address: liveSystemSettings?.usdt_erc20_address || '0x32165eChibuikeReceiveEthab88b098defB5',
       network: 'Ethereum (ERC20)',
       fullName: 'Tether USD ERC-20'
     }
@@ -309,171 +325,12 @@ export default function DashboardView({
     }).catch(console.error);
   }, []);
 
-  // Admin Module States
-  const [adminUsers, setAdminUsers] = useState<UserState[]>([]);
-  const [adminTransactions, setAdminTransactions] = useState<Transaction[]>([]);
-  const [adminLoading, setAdminLoading] = useState(false);
-  const [adminStatusMsg, setAdminStatusMsg] = useState('');
+  // Admin Module States removed
 
-  // Plans creation form states
-  const [newPlanName, setNewPlanName] = useState('HIGH YIELD STACK');
-  const [newPlanMin, setNewPlanMin] = useState('50');
-  const [newPlanMax, setNewPlanMax] = useState('10000');
-  const [newPlanRoi, setNewPlanRoi] = useState('115'); 
-  const [newPlanTerm, setNewPlanTerm] = useState('7'); 
 
-  // Credit custom amount form states
-  const [targetUserId, setTargetUserId] = useState('');
-  const [creditAmount, setCreditAmount] = useState('100.00');
-  const [creditType, setCreditType] = useState<'Bonus' | 'Profit' | 'Deposit'>('Bonus');
-  const [creditProcessor, setCreditProcessor] = useState('USDT TRC20');
 
-  const loadAdminData = async () => {
-    setAdminLoading(true);
-    try {
-      const usersList = await getAllUsers();
-      const txList = await getAllTransactions();
-      setAdminUsers(usersList);
-      setAdminTransactions(txList);
-      if (usersList.length > 0 && !targetUserId) {
-        setTargetUserId(usersList[0].uid || '');
-      }
-    } catch (e) {
-      console.error("loadAdminData error:", e);
-    } finally {
-      setAdminLoading(false);
-    }
-  };
 
-  React.useEffect(() => {
-    if (activeSection === 'admin-controls') {
-      loadAdminData();
-    }
-  }, [activeSection]);
 
-  const handleApproveTransaction = async (txId: string, userId: string, type: string) => {
-    try {
-      setAdminStatusMsg(`Approving ${type}...`);
-      await updateTransactionStatus(txId, 'Approved');
-      
-      if (type === 'Withdrawal') {
-        await updateWithdrawalStatus(userId, txId, 'Approved');
-      }
-      
-      setAdminStatusMsg('Operation completed successfully!');
-      await loadAdminData();
-      if (reloadTransactions) {
-        await reloadTransactions(user.uid || `user_${user.username}`);
-      }
-      setTimeout(() => setAdminStatusMsg(''), 3000);
-    } catch (e) {
-      console.error(e);
-      alert('Error approving item');
-    }
-  };
-
-  const handleRejectTransaction = async (txId: string, userId: string, type: string) => {
-    try {
-      setAdminStatusMsg(`Rejecting ${type}...`);
-      await updateTransactionStatus(txId, 'Rejected');
-      
-      if (type === 'Withdrawal') {
-        await updateWithdrawalStatus(userId, txId, 'Rejected');
-      }
-      
-      setAdminStatusMsg('Operation completed successfully!');
-      await loadAdminData();
-      if (reloadTransactions) {
-        await reloadTransactions(user.uid || `user_${user.username}`);
-      }
-      setTimeout(() => setAdminStatusMsg(''), 3000);
-    } catch (e) {
-      console.error(e);
-      alert('Error rejecting item');
-    }
-  };
-
-  const handleCreateInvestmentPlan = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const minVal = parseFloat(newPlanMin);
-    const maxVal = parseFloat(newPlanMax);
-    const roiVal = parseFloat(newPlanRoi);
-    const termVal = parseFloat(newPlanTerm);
-
-    if (!newPlanName || isNaN(minVal) || isNaN(maxVal) || isNaN(roiVal) || isNaN(termVal)) {
-      alert('All plan fields are required and must be valid numbers.');
-      return;
-    }
-
-    try {
-      setAdminStatusMsg('Creating new investment plan...');
-      const planId = 'plan_admin_' + Date.now();
-      await addInvestmentPlan({
-        id: planId,
-        name: newPlanName.toUpperCase(),
-        min: minVal,
-        max: maxVal,
-        roi: roiVal,
-        term: termVal,
-        dailyRateText: `${((roiVal - 100) / termVal).toFixed(2)}% DAILY`
-      });
-      setAdminStatusMsg('Plan created successfully!');
-      setNewPlanName('');
-      setTimeout(() => setAdminStatusMsg(''), 3000);
-      
-      const plans = await getInvestmentPlans();
-      const formatted = plans.map(p => ({
-        id: p.id,
-        name: p.name,
-        min: p.min,
-        max: p.max,
-        roi: p.roi,
-        term: p.term
-      }));
-      setDepositPlans(formatted);
-    } catch (err) {
-      console.error(err);
-      alert('Error creating plan');
-    }
-  };
-
-  const handleCreditAmountSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const amt = parseFloat(creditAmount);
-    if (isNaN(amt) || amt <= 0 || !targetUserId) {
-      alert('Please specify a valid credit amount and target user.');
-      return;
-    }
-
-    const matchedUser = adminUsers.find(u => u.uid === targetUserId);
-    if (!matchedUser) {
-      alert('Selected target user could not be mapped.');
-      return;
-    }
-
-    try {
-      setAdminStatusMsg(`Crediting ${creditType}...`);
-      await addTransactionRecord(targetUserId, {
-        username: matchedUser.username,
-        type: creditType,
-        amount: amt,
-        date: new Date().toLocaleString(),
-        timestamp: Date.now(),
-        status: 'Approved',
-        processor: creditProcessor as any
-      });
-      setAdminStatusMsg(`Credited successfully! User balance will automatically recalculate!`);
-      setCreditAmount('100.00');
-      await loadAdminData();
-      if (reloadTransactions) {
-        await reloadTransactions(user.uid || `user_${user.username}`);
-      }
-      setTimeout(() => setAdminStatusMsg(''), 3000);
-    } catch (err) {
-      console.error(err);
-      alert('Error crediting account');
-    }
-  };
 
   const handleProcessDeposit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1179,7 +1036,7 @@ export default function DashboardView({
                       </button>
 
                       <p className="text-[8px] text-slate-500 text-center leading-normal">
-                        <strong>💡 Sandbox Notice:</strong> Standard confirmations render as <strong>'Pending'</strong> auditing. You can manually approve or reject them inside the <strong>'Admin Controls'</strong> menu on your left sidebar!
+                        <strong>💡 Sandbox Notice:</strong> Standard confirmations render as <strong>'Pending'</strong> auditing. Please use the automated self-approve shortcut above to complete simulated payments!
                       </p>
 
                       <button
@@ -1200,6 +1057,19 @@ export default function DashboardView({
         {/* Dashboard index content view */}
         {activeSection === 'dashboard' && (
           <div className="flex flex-col gap-6 animate-in fade-in duration-300">
+            {/* Dynamic Announcement Ticker Box */}
+            {liveSystemSettings?.announcement && (
+              <div className="bg-gradient-to-r from-slate-900 via-[#0d1c2e] to-slate-900 border border-[#0d5952]/30 rounded-xl p-4 md:p-4.5 text-slate-100 shadow-md flex items-center gap-3.5 animate-in slide-in-from-top-4 duration-300">
+                <div className="w-8 h-8 rounded-full bg-[#00c2b2]/10 flex items-center justify-center text-[#00c2b2] shrink-0 border border-[#00c2b2]/20 text-xs">
+                  📢
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  <span className="text-[10px] uppercase font-black tracking-widest text-[#00c2b2] font-mono block leading-none mb-1">System Broadcast Bulletin:</span>
+                  <p className="text-xs md:text-sm font-semibold text-slate-200">{liveSystemSettings.announcement}</p>
+                </div>
+              </div>
+            )}
+
             {/* Quick action boxes grid of 8 cards matching screenshot 5 */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               
@@ -2199,385 +2069,6 @@ export default function DashboardView({
                   </tbody>
                 </table>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* ===== ADMINISTRATIVE CONTROLS DASHBOARD ===== */}
-        {activeSection === 'admin-controls' && (
-          <div className="space-y-8 max-w-7xl mx-auto w-full p-4 md:p-8 animate-in fade-in duration-300">
-            <div className="bg-slate-900 rounded-3xl p-6 md:p-8 border border-slate-700 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6 text-white">
-              <div>
-                <span className="bg-rose-500/10 text-rose-400 text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border border-rose-500/20 mb-3 inline-block">
-                  Secure Admin Terminal
-                </span>
-                <h2 className="text-2xl md:text-3xl font-black uppercase font-display tracking-tight text-white mb-1">
-                  Backoffice Console
-                </h2>
-                <p className="text-slate-400 text-xs font-semibold">
-                  Manage the investment portal parameters, dynamic plans, and approvals.
-                </p>
-              </div>
-              <div className="flex gap-4 font-mono select-none">
-                <div className="px-5 py-3.5 bg-slate-800 rounded-2xl border border-slate-700/50">
-                  <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">Total Registered Users</div>
-                  <div className="text-xl font-black text-rose-400">{adminUsers.length}</div>
-                </div>
-                <div className="px-5 py-3.5 bg-slate-800 rounded-2xl border border-slate-700/50">
-                  <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">Audit Transactions</div>
-                  <div className="text-xl font-black text-emerald-400">{adminTransactions.length}</div>
-                </div>
-              </div>
-            </div>
-
-            {adminStatusMsg && (
-              <div className="p-4 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-xl font-mono text-xs font-bold text-center animate-pulse">
-                {adminStatusMsg}
-              </div>
-            )}
-
-            {/* Subpanels layout */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-              
-              {/* LEFT COLUMN: Approvals list */}
-              <div className="lg:col-span-8 space-y-8">
-                
-                {/* 1. DEPOSIT APPROVALS CONTAINER */}
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="px-6 py-4.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
-                      Pending Deposit Requests
-                    </h3>
-                    <span className="bg-blue-50 text-blue-700 text-[10px] font-bold py-0.5 px-2 rounded-full">
-                      {adminTransactions.filter(t => t.type === 'Deposit' && t.status === 'Pending').length} Pending
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse font-sans">
-                      <thead>
-                        <tr className="border-b border-slate-100 text-[10px] font-black uppercase text-slate-500 tracking-wider">
-                          <th className="py-4 px-6">User</th>
-                          <th className="py-4 px-6 text-center">Amount</th>
-                          <th className="py-4 px-6 text-center">Gateway</th>
-                          <th className="py-4 px-6 text-right">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-xs font-semibold text-slate-700">
-                        {adminTransactions.filter(t => t.type === 'Deposit' && t.status === 'Pending').length === 0 ? (
-                          <tr>
-                            <td colSpan={4} className="py-8 text-center text-slate-400">
-                              No pending deposits found in system logs.
-                            </td>
-                          </tr>
-                        ) : (
-                          adminTransactions
-                            .filter(t => t.type === 'Deposit' && t.status === 'Pending')
-                            .map((tx) => (
-                              <tr key={tx.id} className="hover:bg-slate-50">
-                                <td className="py-4 px-6 font-bold">{tx.username || 'unknown'}</td>
-                                <td className="py-4 px-6 text-center text-emerald-600 font-mono font-bold">${tx.amount.toFixed(2)}</td>
-                                <td className="py-4 px-6 text-center">
-                                  <span className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded text-[10px] font-bold font-mono">
-                                    {tx.processor}
-                                  </span>
-                                </td>
-                                <td className="py-4 px-6 text-right">
-                                  <div className="flex justify-end gap-1.5">
-                                    <button
-                                      onClick={() => handleApproveTransaction(tx.id, tx.userId, 'Deposit')}
-                                      className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider rounded-md transition-all cursor-pointer"
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      onClick={() => handleRejectTransaction(tx.id, tx.userId, 'Deposit')}
-                                      className="px-2.5 py-1 bg-rose-500 hover:bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider rounded-md transition-all cursor-pointer"
-                                    >
-                                      Reject
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* 2. WITHDRAWAL APPROVALS CONTAINER */}
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="px-6 py-4.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
-                      Pending Cashout Requests
-                    </h3>
-                    <span className="bg-violet-50 text-violet-700 text-[10px] font-bold py-0.5 px-2 rounded-full">
-                      {adminTransactions.filter(t => t.type === 'Withdrawal' && t.status === 'Pending').length} Pending
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse font-sans">
-                      <thead>
-                        <tr className="border-b border-slate-100 text-[10px] font-black uppercase text-slate-500 tracking-wider">
-                          <th className="py-4 px-6">User</th>
-                          <th className="py-4 px-6 text-center">Amount</th>
-                          <th className="py-4 px-6 text-center">Gateway</th>
-                          <th className="py-4 px-6 text-right">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-xs font-semibold text-slate-700">
-                        {adminTransactions.filter(t => t.type === 'Withdrawal' && t.status === 'Pending').length === 0 ? (
-                          <tr>
-                            <td colSpan={4} className="py-8 text-center text-slate-400">
-                              No pending withdrawals found in system logs.
-                            </td>
-                          </tr>
-                        ) : (
-                          adminTransactions
-                            .filter(t => t.type === 'Withdrawal' && t.status === 'Pending')
-                            .map((tx) => (
-                              <tr key={tx.id} className="hover:bg-slate-50">
-                                <td className="py-4 px-6 font-bold">{tx.username || 'unknown'}</td>
-                                <td className="py-4 px-6 text-center text-rose-600 font-mono font-bold">${tx.amount.toFixed(2)}</td>
-                                <td className="py-4 px-6 text-center">
-                                  <span className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded text-[10px] font-bold font-mono">
-                                    {tx.processor}
-                                  </span>
-                                </td>
-                                <td className="py-4 px-6 text-right">
-                                  <div className="flex justify-end gap-1.5">
-                                    <button
-                                      onClick={() => handleApproveTransaction(tx.id, tx.userId, 'Withdrawal')}
-                                      className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider rounded-md transition-all cursor-pointer"
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      onClick={() => handleRejectTransaction(tx.id, tx.userId, 'Withdrawal')}
-                                      className="px-2.5 py-1 bg-rose-500 hover:bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider rounded-md transition-all cursor-pointer"
-                                    >
-                                      Reject
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* 3. ALL SYSTEM TRANSACTIONS AUDIT ARCHIVE */}
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden font-sans">
-                  <div className="px-6 py-4.5 bg-slate-50 border-b border-slate-100">
-                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
-                      System Action Audit Logs (Last 20)
-                    </h3>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse font-sans">
-                      <thead>
-                        <tr className="border-b border-light text-[10px] font-black uppercase text-slate-500 tracking-wider">
-                          <th className="py-4 px-6">User</th>
-                          <th className="py-4 px-6 text-center">Type</th>
-                          <th className="py-4 px-6 text-center">Amount</th>
-                          <th className="py-4 px-6 text-center">Status</th>
-                          <th className="py-4 px-6 text-right font-sans">Date</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-xs font-semibold text-slate-700">
-                        {adminTransactions.length === 0 ? (
-                          <tr>
-                            <td colSpan={5} className="py-8 text-center text-slate-400">
-                              No financial actions logged yet.
-                            </td>
-                          </tr>
-                        ) : (
-                          adminTransactions.slice(0, 20).map((t) => (
-                            <tr key={t.id} className="hover:bg-slate-50">
-                              <td className="py-3.5 px-6 font-bold">{t.username || 'n/a'}</td>
-                              <td className="py-3.5 px-6 text-center">
-                                <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                                  t.type === 'Deposit' ? 'bg-emerald-50 text-emerald-600' :
-                                  t.type === 'Withdrawal' ? 'bg-amber-50 text-amber-600' :
-                                  t.type === 'Investment' ? 'bg-indigo-50 text-indigo-600' :
-                                  t.type === 'Profit' ? 'bg-teal-50 text-teal-600' : 'bg-pink-50 text-pink-600'
-                                }`}>
-                                  {t.type}
-                                </span>
-                              </td>
-                              <td className="py-3.5 px-6 text-center font-mono font-bold">${t.amount.toFixed(2)}</td>
-                              <td className="py-3.5 px-6 text-center">
-                                <span className={`px-2 py-0.5 text-[9px] rounded font-black uppercase tracking-widest ${
-                                  t.status === 'Approved' || t.status === 'Completed' ? 'bg-emerald-100 text-emerald-800' :
-                                  t.status === 'Pending' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
-                                }`}>
-                                  {t.status}
-                                </span>
-                              </td>
-                              <td className="py-3.5 px-6 text-right text-[11px] text-slate-400 font-sans font-medium">{t.date}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* RIGHT COLUMN: Creators/Modifiers parameters forms */}
-              <div className="lg:col-span-4 space-y-8 font-sans">
-                
-                {/* 1. DYNAMIC INVESTMENT PLAN CREATION Form */}
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 mb-4 pb-2 border-b">
-                    Create Investment Plan
-                  </h3>
-                  <form onSubmit={handleCreateInvestmentPlan} className="space-y-4">
-                    <div>
-                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Plan Name</label>
-                      <input
-                        type="text"
-                        value={newPlanName}
-                        onChange={(e) => setNewPlanName(e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-sans text-xs focus:outline-none focus:border-[#00c2b2] font-bold"
-                        placeholder="E.g. GOLD OVERNIGHT"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Min Deposit ($)</label>
-                        <input
-                          type="number"
-                          value={newPlanMin}
-                          onChange={(e) => setNewPlanMin(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:outline-none focus:border-[#00c2b2] font-bold"
-                          placeholder="25"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Max Deposit ($)</label>
-                        <input
-                          type="number"
-                          value={newPlanMax}
-                          onChange={(e) => setNewPlanMax(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:outline-none focus:border-[#00c2b2] font-bold"
-                          placeholder="10000"
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">ROI (% total return)</label>
-                        <input
-                          type="number"
-                          value={newPlanRoi}
-                          onChange={(e) => setNewPlanRoi(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:outline-none focus:border-[#00c2b2] font-bold"
-                          placeholder="115"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Term (Days)</label>
-                        <input
-                          type="number"
-                          value={newPlanTerm}
-                          onChange={(e) => setNewPlanTerm(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:outline-none focus:border-[#00c2b2] font-bold"
-                          placeholder="7"
-                        />
-                      </div>
-                    </div>
-                    <button
-                      type="submit"
-                      className="w-full py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-premium cursor-pointer transition-transform duration-150 transform hover:scale-[1.01] active:scale-95"
-                    >
-                      + Save Dynamic Plan
-                    </button>
-                  </form>
-                </div>
-
-                {/* 2. CUSTOM USER BALANCE CREDITING Form (Bonus/Profit) */}
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 mb-4 pb-2 border-b">
-                    Award Custom Credits
-                  </h3>
-                  <form onSubmit={handleCreditAmountSubmit} className="space-y-4">
-                    <div>
-                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Target User</label>
-                      <select
-                        value={targetUserId}
-                        onChange={(e) => setTargetUserId(e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-sans text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00c2b2]"
-                      >
-                        {adminUsers.length === 0 ? (
-                          <option value="">No registered users</option>
-                        ) : (
-                          adminUsers.map((u) => (
-                            <option key={u.uid} value={u.uid}>
-                              {u.fullName || u.username} ({u.username})
-                            </option>
-                          ))
-                        )}
-                      </select>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Transaction</label>
-                        <select
-                          value={creditType}
-                          onChange={(e) => setCreditType(e.target.value as any)}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-sans text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00c2b2]"
-                        >
-                          <option value="Bonus">Bonus</option>
-                          <option value="Profit">Profit</option>
-                          <option value="Deposit">Deposit</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Gateway</label>
-                        <select
-                          value={creditProcessor}
-                          onChange={(e) => setCreditProcessor(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-sans text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00c2b2]"
-                        >
-                          <option value="USDT TRC20">USDT TRC20</option>
-                          <option value="Bitcoin">Bitcoin (BTC)</option>
-                          <option value="Ethereum">Ethereum (ETH)</option>
-                          <option value="Account Balance">Account Balance</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Amount (USD)</label>
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold font-mono text-sm">$</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={creditAmount}
-                          onChange={(e) => setCreditAmount(e.target.value)}
-                          className="w-full pl-7 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:outline-none focus:border-[#00c2b2] font-bold text-slate-700"
-                          placeholder="100.00"
-                        />
-                      </div>
-                    </div>
-
-                    <button
-                      type="submit"
-                      className="w-full py-2.5 bg-[#00c2b2] hover:bg-[#00a395] text-[#0a1626] font-black text-[10px] uppercase tracking-widest rounded-xl shadow-premium cursor-pointer transition-transform duration-150 transform hover:scale-[1.01] active:scale-95"
-                    >
-                      Credit User Ledger
-                    </button>
-                  </form>
-                </div>
-
-              </div>
-
             </div>
           </div>
         )}
