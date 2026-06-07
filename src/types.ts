@@ -1,4 +1,4 @@
-export type Page = 'Home' | 'About' | 'FAQs' | 'Register' | 'Dashboard' | 'Deposit' | 'News';
+export type Page = 'Home' | 'About' | 'FAQs' | 'Register' | 'Dashboard' | 'Deposit' | 'News' | 'Admin';
 
 export interface Deposit {
   id?: string;
@@ -94,4 +94,5 @@ export interface UserState {
   totalDeposit: number;
   lastWithdrawal: string | number;
   profilePhoto?: string;
+  suspended?: boolean;
 }

@@ -25,6 +25,8 @@ interface SidebarProps {
   username: string;
   isOpen?: boolean;
   onClose?: () => void;
+  isAdmin?: boolean;
+  onPageChange?: (page: any) => void;
 }
 
 export default function DashboardSidebar({ 
@@ -33,7 +35,9 @@ export default function DashboardSidebar({
   onLogout, 
   username, 
   isOpen = false, 
-  onClose
+  onClose,
+  isAdmin = false,
+  onPageChange
 }: SidebarProps) {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} /> },
@@ -125,7 +129,16 @@ export default function DashboardSidebar({
       </nav>
 
       {/* Logout button at footer of sidebar */}
-      <div className="p-4 border-t border-[#10253f] bg-[#07101c] flex flex-col gap-2">
+      <div className="p-4 border-t border-[#10253f] bg-[#07101c] flex flex-col gap-2 bg-[#060e18]">
+        {isAdmin && onPageChange && (
+          <button
+            onClick={() => onPageChange('Admin')}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider text-purple-400 bg-purple-500/10 border border-purple-500/20 hover:text-white hover:bg-[#9333ea] hover:border-transparent transition-all cursor-pointer shadow-md shadow-purple-950/20 mb-1"
+          >
+            <ShieldAlert size={16} className="text-purple-400 shrink-0" />
+            <span>Admin Control Panel</span>
+          </button>
+        )}
 
         <button
           onClick={onLogout}

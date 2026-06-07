@@ -8,51 +8,52 @@ service cloud.firestore {
     }
 
     // Users Collection rules: Users can read and write only their own profiles.
-    // Permanent deletion of admin overrides.
+    // Admin has override to retrieve and update profiles.
     match /users/{userId} {
-      allow read: if isSignedIn() && request.auth.uid == userId;
-      allow create, update: if isSignedIn() && request.auth.uid == userId && isValidUser(request.resource.data);
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create, update: if isSignedIn() && (request.auth.uid == userId || isAdmin()) && isValidUser(request.resource.data);
       allow delete: if false;
 
       match /withdrawals/{withdrawalId} {
-        allow read, write: if isSignedIn() && userId == request.auth.uid;
+        allow read, write: if isSignedIn() && (userId == request.auth.uid || isAdmin());
       }
     }
 
     // Deposits Collection rules: Relational checks against resource data
     match /deposits/{depositId} {
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidDepositRecord(request.resource.data);
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && isValidDepositRecord(request.resource.data);
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && (request.resource.data.userId == request.auth.uid || isAdmin()) && isValidDepositRecord(request.resource.data);
+      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin()) && isValidDepositRecord(request.resource.data);
       allow delete: if false;
     }
 
     // Withdrawals Collection rules: Secure queries validation
     match /withdrawals/{withdrawalId} {
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidWithdrawalRecord(request.resource.data);
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && isValidWithdrawalRecord(request.resource.data);
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && (request.resource.data.userId == request.auth.uid || isAdmin()) && isValidWithdrawalRecord(request.resource.data);
+      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin()) && isValidWithdrawalRecord(request.resource.data);
       allow delete: if false;
     }
 
     // Transactions Collection rules: every financial action log
     match /transactions/{transactionId} {
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidTransactionRecord(request.resource.data);
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && isValidTransactionRecord(request.resource.data);
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && (request.resource.data.userId == request.auth.uid || isAdmin()) && isValidTransactionRecord(request.resource.data);
+      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin()) && isValidTransactionRecord(request.resource.data);
       allow delete: if false;
     }
 
-    // Dynamic Plans Collection rules: Read-only for everyone, disabled admin editing/creation
+    // Dynamic Plans Collection rules: Read-only for everyone, create/update/delete for admin
     match /plans/{planId} {
       allow read: if true;
-      allow write, delete: if false;
+      allow write: if isAdmin() && isValidPlan(request.resource.data);
+      allow delete: if isAdmin();
     }
 
-    // Global Settings matches: Read-only for everyone, disabled admin editing
+    // Global Settings matches: Read-only for everyone, edit/write for admin
     match /settings/{settingsId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if isAdmin() && isValidSettings(request.resource.data);
     }
 
     // Helper functions
@@ -61,7 +62,9 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return false;
+      return isSignedIn() && 
+             request.auth.token.email != null && 
+             request.auth.token.email.lower() == "blessingubah38@gmail.com";
     }
 
     function isValidSettings(data) {

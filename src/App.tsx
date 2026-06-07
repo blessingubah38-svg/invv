@@ -11,6 +11,7 @@ import DashboardView from './components/DashboardView';
 import AboutView from './components/AboutView';
 import FAQsView from './components/FAQsView';
 import RegisterView from './components/RegisterView';
+import AdminView from './components/AdminView';
 import { Page, UserState, Deposit, Withdrawal, Transaction } from './types';
 import { 
   saveUserProfile, 
@@ -26,9 +27,12 @@ import {
   isFirebaseReady,
   syncLocalDataToFirebase
 } from './services/db';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { auth, db, handleFirestoreError, OperationType } from './firebase';
-import { collection, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import {
+  subscribeToUserTransactions,
+  subscribeToApprovedWithdrawals,
+  subscribeToAuth,
+  authLogout
+} from './services/firebaseService';
 import { 
   Play, 
   HelpCircle, 
@@ -36,6 +40,7 @@ import {
   Users, 
   ArrowRight, 
   ShieldCheck, 
+  ShieldAlert,
   ChevronRight, 
   Smartphone, 
   TrendingUp, 
@@ -122,28 +127,12 @@ export default function App() {
     
     const uid = user.uid || `user_${user.username}`;
     
-    if (isFirebaseReady && auth.currentUser && auth.currentUser.uid === uid) {
-      const pathForOnSnapshot = `users/${uid}/withdrawals`;
-      const q = query(
-        collection(db, 'users', uid, 'withdrawals'),
-        where('status', '==', 'Approved'),
-        orderBy('approvedAt', 'desc'),
-        limit(1)
+    if (isFirebaseReady) {
+      const unsubscribe = subscribeToApprovedWithdrawals(
+        uid,
+        (amount) => setLastApprovedWithdrawal(amount),
+        (error) => console.error("Error subscribing to approved withdrawals:", error)
       );
-      
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        if (!snapshot.empty) {
-          const docSnap = snapshot.docs[0];
-          const data = docSnap.data();
-          setLastApprovedWithdrawal(Number(data.amount) || 0);
-        } else {
-          setLastApprovedWithdrawal(0);
-        }
-      }, (error) => {
-        console.error("Error listening to approved withdrawals subcollection:", error);
-        handleFirestoreError(error, OperationType.GET, pathForOnSnapshot);
-      });
-      
       return () => unsubscribe();
     } else {
       // Local fallback: read matches from local storage/state in real-time
@@ -200,47 +189,18 @@ export default function App() {
     reloadDeposits(uid).catch(console.error);
     setLoadingTransactions(true);
 
-    if (isFirebaseReady && auth.currentUser && auth.currentUser.uid === uid) {
-      const pathForOnSnapshot = 'transactions';
-      const q = query(
-        collection(db, 'transactions'),
-        where('userId', '==', uid)
+    if (isFirebaseReady) {
+      const unsubscribe = subscribeToUserTransactions(
+        uid,
+        (records) => {
+          setTransactions(records);
+          setLoadingTransactions(false);
+        },
+        (error) => {
+          console.error("Error subscribing to transactions:", error);
+          setLoadingTransactions(false);
+        }
       );
-
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const records: Transaction[] = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          records.push({
-            id: data.id || docSnap.id,
-            userId: data.userId || uid,
-            username: data.username || '',
-            type: data.type || 'Deposit',
-            amount: Number(data.amount) || 0,
-            date: data.date || '',
-            timestamp: Number(data.timestamp) || Date.now(),
-            status: data.status || 'Approved',
-            processor: data.processor || 'USDT TRC20',
-            planId: data.planId,
-            planName: data.planName,
-            term: data.term ? Number(data.term) : undefined,
-            roi: data.roi ? Number(data.roi) : undefined,
-            referenceId: data.referenceId,
-            createdAt: data.createdAt || Number(data.timestamp) || Date.now(),
-            approvedAt: data.approvedAt || null
-          });
-        });
-        
-        // Sort newest first
-        records.sort((a, b) => b.timestamp - a.timestamp);
-        setTransactions(records);
-        setLoadingTransactions(false);
-      }, (error) => {
-        console.error("Error listening to transactions:", error);
-        handleFirestoreError(error, OperationType.GET, pathForOnSnapshot);
-        setLoadingTransactions(false);
-      });
-
       return () => unsubscribe();
     } else {
       // Local fallback: read matches from local storage/state in real-time
@@ -498,6 +458,8 @@ export default function App() {
       
       if (path.includes('/dashboard') || hash.includes('dashboard')) {
         setCurrentPage('Dashboard');
+      } else if (path.includes('/admin') || hash.includes('admin')) {
+        setCurrentPage('Admin');
       } else if (path.includes('/deposit') || hash.includes('deposit')) {
         setCurrentPage('Deposit');
       } else if (path.includes('/about') || hash.includes('about')) {
@@ -513,6 +475,9 @@ export default function App() {
 
     window.addEventListener('popstate', handleLocationRouting);
     window.addEventListener('hashchange', handleLocationRouting);
+    
+    // Run initially to handle direct URLs or bookmarks on load
+    handleLocationRouting();
     
     return () => {
       window.removeEventListener('popstate', handleLocationRouting);
@@ -549,13 +514,14 @@ export default function App() {
       ...prev,
       isLoggedIn: false
     }));
-    signOut(auth).catch(console.error);
+    authLogout().catch(console.error);
     setCurrentPage('Home');
   };
 
   // Auth restore listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    if (!isFirebaseReady) return;
+    const unsubscribe = subscribeToAuth(async (firebaseUser) => {
       if (firebaseUser) {
         try {
           const profile = await fetchUserProfile(firebaseUser.uid);
@@ -566,9 +532,7 @@ export default function App() {
               isLoggedIn: true
             });
             // Automatically push any local transaction/profile data up to the newly configured Firebase
-            if (isFirebaseReady) {
-              syncLocalDataToFirebase(firebaseUser.uid, profile.username || '').catch(console.error);
-            }
+            syncLocalDataToFirebase(firebaseUser.uid, profile.username || '').catch(console.error);
           }
         } catch (err) {
           console.error("Auth restore error: ", err);
@@ -641,8 +605,53 @@ export default function App() {
 
   const [activePlanSelectionId, setActivePlanSelectionId] = useState<string>('plan_84h');
 
+  // Renders Admin Panel View
+  if (currentPage === 'Admin') {
+    return (
+      <AdminView 
+        onPageChange={handlePageChange}
+        currentUser={liveUser}
+        onLoginSuccess={(adminUser) => {
+          setUser({
+            ...adminUser,
+            isLoggedIn: true
+          });
+        }}
+      />
+    );
+  }
+
   // Renders Dashboard with customized backoffice shell
   if (currentPage === 'Dashboard' || currentPage === 'Deposit') {
+    if (liveUser.suspended) {
+      return (
+        <div id="suspended-user-blocker" className="min-h-screen bg-[#040d1a] flex items-center justify-center p-4 text-slate-100 font-sans w-full">
+          <div className="max-w-md w-full bg-[#081525] border border-red-500/20 rounded-2xl p-6 sm:p-8 shadow-2xl text-center space-y-6">
+            <div className="w-16 h-16 bg-red-950/40 border border-red-500/35 rounded-full flex items-center justify-center mx-auto text-red-500">
+              <ShieldAlert size={34} />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-black uppercase tracking-wider text-white">Account Suspended</h2>
+              <p className="text-slate-400 text-[11px] leading-relaxed">
+                Your account (<span className="text-[#00c2b2]">{liveUser.email}</span>) has been suspended by an administrator. Backoffice access, dynamic yielding investments, deposits, and withdrawal permissions are currently restricted.
+              </p>
+            </div>
+            <div className="bg-[#050e18] p-4 rounded-xl border border-[#11233d] text-left space-y-1.5 font-semibold text-xs">
+              <span className="text-[10px] text-slate-500 uppercase font-black block tracking-wider">Administration Contact</span>
+              <span className="text-white block">Email: blessingubah38@gmail.com</span>
+              <span className="text-[9px] text-slate-400 block mt-1">Please reference your client username in your request.</span>
+            </div>
+            <button 
+              onClick={handleLogout}
+              className="w-full bg-slate-800 hover:bg-slate-700 text-[10px] font-black uppercase tracking-wider py-3.5 rounded-xl transition-all cursor-pointer text-slate-200"
+            >
+              Sign Out of Session
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="flex h-screen overflow-hidden bg-slate-100 font-sans w-full">
         <DashboardSidebar 
@@ -652,6 +661,8 @@ export default function App() {
           username={user.username}
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
+          isAdmin={liveUser.email === 'blessingubah38@gmail.com'}
+          onPageChange={handlePageChange}
         />
         <DashboardView 
           onPageChange={handlePageChange}

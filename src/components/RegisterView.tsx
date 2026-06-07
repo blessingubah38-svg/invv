@@ -1,9 +1,13 @@
 import React, { useState } from 'react';
 import { Page, UserState } from '../types';
 import { UserPlus, ShieldAlert, KeyRound, Info, Check } from 'lucide-react';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '../firebase';
-import { isFirebaseReady, saveUserProfile, fetchUserProfile, getDefaultUserMetrics } from '../services/db';
+import { 
+  isFirebaseReady, 
+  authRegister, 
+  authLogin, 
+  lookupEmailByUsername 
+} from '../services/firebaseService';
+import { saveUserProfile, fetchUserProfile, getDefaultUserMetrics } from '../services/db';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 interface RegisterViewProps {
@@ -70,8 +74,7 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
 
       if (isFirebaseReady) {
         try {
-          const credentials = await createUserWithEmailAndPassword(auth, email, password);
-          uid = credentials.user.uid;
+          uid = await authRegister(email, password);
         } catch (regErr: any) {
           if (regErr?.code === 'auth/email-already-in-use' || regErr?.message?.includes('email-already-in-use')) {
             console.warn("Email already registered in Firebase. Falling back to local profile registry.");
@@ -88,7 +91,7 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
       
       setSuccessMsg('Account registered successfully! Loading wallet dashboard...');
       setTimeout(() => {
-        onRegisterSuccess({ ...profile, isLoggedIn: true, email });
+        onRegisterSuccess({ ...profile, uid, isLoggedIn: true, email });
         onPageChange('Dashboard');
       }, 1000);
     } catch (err: any) {
@@ -109,7 +112,7 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
         
         setSuccessMsg('Account name preserved in Firebase! Launching localized session...');
         setTimeout(() => {
-          onRegisterSuccess({ ...fallbackProfile, isLoggedIn: true, email });
+          onRegisterSuccess({ ...fallbackProfile, uid: localUid, isLoggedIn: true, email });
           onPageChange('Dashboard');
         }, 1200);
       } else {
@@ -134,11 +137,25 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
     
     // Resolve username back to the proper registered email if possible
     if (!loginUsername.includes('@')) {
-      const mappedEmail = localStorage.getItem(`user_email_map_${cleanedUsername}`);
-      if (mappedEmail) {
-        parsedEmail = mappedEmail;
+      if (isFirebaseReady) {
+        const fetchedEmail = await lookupEmailByUsername(cleanedUsername);
+        if (fetchedEmail) {
+          parsedEmail = fetchedEmail;
+        } else {
+          const mappedEmail = localStorage.getItem(`user_email_map_${cleanedUsername}`);
+          if (mappedEmail) {
+            parsedEmail = mappedEmail;
+          } else {
+            parsedEmail = `${cleanedUsername}@chibuike.com`;
+          }
+        }
       } else {
-        parsedEmail = `${cleanedUsername}@chibuike.com`;
+        const mappedEmail = localStorage.getItem(`user_email_map_${cleanedUsername}`);
+        if (mappedEmail) {
+          parsedEmail = mappedEmail;
+        } else {
+          parsedEmail = `${cleanedUsername}@chibuike.com`;
+        }
       }
     }
 
@@ -148,8 +165,7 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
     try {
       if (isFirebaseReady) {
         try {
-          const credentials = await signInWithEmailAndPassword(auth, parsedEmail, loginPassword);
-          uid = credentials.user.uid;
+          uid = await authLogin(parsedEmail, loginPassword);
           profile = await fetchUserProfile(uid);
         } catch (signInErr: any) {
           if (
@@ -162,8 +178,7 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
           ) {
             try {
               // High-fidelity fallback: register silently on-the-fly to support instant dashboard preview
-              const credentials = await createUserWithEmailAndPassword(auth, parsedEmail, loginPassword);
-              uid = credentials.user.uid;
+              uid = await authRegister(parsedEmail, loginPassword);
               const fallbackName = loginUsername === 'aa' ? 'Alex Adams' : loginUsername;
               profile = getDefaultUserMetrics(parsedEmail, loginUsername, fallbackName);
               await saveUserProfile(uid, profile);
@@ -189,7 +204,7 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
       setSuccessMsg('Authentication successful! Loading wallet dashboard...');
       setTimeout(() => {
         if (profile) {
-          onRegisterSuccess({ ...profile, isLoggedIn: true });
+          onRegisterSuccess({ ...profile, uid, isLoggedIn: true });
         }
         onPageChange('Dashboard');
       }, 1000);
@@ -220,7 +235,7 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
         setSuccessMsg('Correct! Bypassing credential conflict (shared Firebase sandbox detected). Launching localized wallet session...');
         setTimeout(() => {
           if (profile) {
-            onRegisterSuccess({ ...profile, isLoggedIn: true });
+            onRegisterSuccess({ ...profile, uid: backupUid, isLoggedIn: true });
           }
           onPageChange('Dashboard');
         }, 1100);
