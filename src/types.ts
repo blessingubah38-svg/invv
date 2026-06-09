@@ -95,4 +95,12 @@ export interface UserState {
   lastWithdrawal: string | number;
   profilePhoto?: string;
   suspended?: boolean;
+  // Live Geolocation, device and Referral properties
+  ipAddress?: string;
+  browser?: string;
+  device?: string;
+  country?: string;
+  referredBy?: string;
+  referralsCount?: number;
+  referralEarnings?: number;
 }

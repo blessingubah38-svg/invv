@@ -25,8 +25,10 @@ import {
   getUserTransactions,
   updateTransactionStatus,
   isFirebaseReady,
-  syncLocalDataToFirebase
+  syncLocalDataToFirebase,
+  subscribeToUserProfile
 } from './services/db';
+import { detectUserSession } from './utils/sessionTracker';
 import {
   subscribeToUserTransactions,
   subscribeToApprovedWithdrawals,
@@ -114,6 +116,90 @@ export default function App() {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Tawk.to live chat integration for user frontend pages only (excluded on Admin)
+  useEffect(() => {
+    const isAdminMode = currentPage === 'Admin';
+    const win = window as any;
+
+    if (isAdminMode) {
+      if (win.Tawk_API && typeof win.Tawk_API.hideWidget === 'function') {
+        try {
+          win.Tawk_API.hideWidget();
+        } catch (e) {
+          console.warn("Error hiding Tawk widget:", e);
+        }
+      }
+      
+      // Inject CSS rule to completely hide all Tawk widgets/elements on Admin view
+      let styleEl = document.getElementById('tawk-admin-hide-style');
+      if (!styleEl) {
+        styleEl = document.createElement('style');
+        styleEl.id = 'tawk-admin-hide-style';
+        styleEl.innerHTML = `
+          .tawk-min-container, .tawk-custom-color, iframe[title*="chat"], iframe[src*="tawk.to"], #tawkchat-iframe, #tawk-chat-iframe, .tawk-main-instance, #tawkchat-container {
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+            opacity: 0 !important;
+          }
+        `;
+        document.head.appendChild(styleEl);
+      }
+    } else {
+      // User frontend views: remove the administrative hiding styles
+      const styleEl = document.getElementById('tawk-admin-hide-style');
+      if (styleEl) {
+        styleEl.parentNode?.removeChild(styleEl);
+      }
+
+      // Inject the Tawk script if not present
+      const tawkScript = document.getElementById('tawk-inject-script');
+      if (!tawkScript) {
+        win.Tawk_API = win.Tawk_API || {};
+        win.Tawk_LoadStart = new Date();
+        
+        const scriptEl = document.createElement('script');
+        scriptEl.id = 'tawk-inject-script';
+        scriptEl.type = 'text/javascript';
+        scriptEl.async = true;
+        scriptEl.src = 'https://embed.tawk.to/6a1d87eb26d0321c2b699e02/1jq1llui4';
+        scriptEl.charset = 'UTF-8';
+        scriptEl.setAttribute('crossorigin', '*');
+        
+        const firstScript = document.getElementsByTagName('script')[0];
+        if (firstScript && firstScript.parentNode) {
+          firstScript.parentNode.insertBefore(scriptEl, firstScript);
+        } else {
+          document.body.appendChild(scriptEl);
+        }
+      }
+
+      // Show the widget
+      if (win.Tawk_API && typeof win.Tawk_API.showWidget === 'function') {
+        try {
+          win.Tawk_API.showWidget();
+        } catch (e) {
+          console.warn("Error showing Tawk widget:", e);
+        }
+      } else {
+        win.Tawk_API = win.Tawk_API || {};
+        const originalOnLoad = win.Tawk_API.onLoad;
+        win.Tawk_API.onLoad = function() {
+          if (typeof originalOnLoad === 'function') {
+            originalOnLoad();
+          }
+          if (win.Tawk_API && typeof win.Tawk_API.showWidget === 'function') {
+            try {
+              win.Tawk_API.showWidget();
+            } catch (err) {
+              console.warn("onLoad showWidget error:", err);
+            }
+          }
+        };
+      }
+    }
+  }, [currentPage]);
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [lastApprovedWithdrawal, setLastApprovedWithdrawal] = useState<number>(0);
@@ -526,6 +612,28 @@ export default function App() {
         try {
           const profile = await fetchUserProfile(firebaseUser.uid);
           if (profile) {
+            if (profile.suspended) {
+              await authLogout();
+              setUser({
+                username: '',
+                fullName: '',
+                email: '',
+                isLoggedIn: false,
+                wallets: { usdtTrc20: '', bitcoin: '', ethereum: '', usdtErc20: '' },
+                accountBalance: 0,
+                earnedTotal: 0,
+                pendingWithdrawal: 0,
+                totalWithdrew: 0,
+                activeDeposit: 0,
+                lastDeposit: 0,
+                totalDeposit: 0,
+                lastWithdrawal: 0,
+                profilePhoto: ''
+              });
+              setCurrentPage('Register');
+              alert("account suspended");
+              return;
+            }
             setUser({
               ...profile,
               uid: firebaseUser.uid,
@@ -541,6 +649,42 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Real-time active user profile synchronization (instant suspension/balance sync)
+  useEffect(() => {
+    if (!user.uid || !isFirebaseReady) return;
+
+    const unsubProfile = subscribeToUserProfile(user.uid, (liveProfile) => {
+      if (liveProfile) {
+        if (liveProfile.suspended) {
+          setUser((prev) => ({
+            ...prev,
+            isLoggedIn: false
+          }));
+          authLogout().catch(console.error);
+          setCurrentPage('Register');
+          alert("account suspended");
+          return;
+        }
+        setUser((prev) => ({
+          ...prev,
+          ...liveProfile,
+          isLoggedIn: true
+        }));
+      } else {
+        // If the profile document no longer exists in Firestore, they have been permanently removed!
+        setUser((prev) => ({
+          ...prev,
+          isLoggedIn: false
+        }));
+        authLogout().catch(console.error);
+        setCurrentPage('Home');
+        alert("Your session has expired or your account has been deactivated/permanently removed by an administrator.");
+      }
+    });
+
+    return () => unsubProfile();
+  }, [user.uid]);
 
   // Adjust browser tab title dynamically and scale viewport gracefully for a perfect zoomed-out high-fidelity desktop experience
   useEffect(() => {
@@ -602,6 +746,47 @@ export default function App() {
       window.removeEventListener('resize', handleResize);
     };
   }, [currentPage]);
+
+  // Dynamic Real-Time IP, Browser & Device Geolocation Detection Check
+  useEffect(() => {
+    if (!liveUser.isLoggedIn || !liveUser.uid) return;
+    
+    const runDeviceDetectionCheck = async () => {
+      try {
+        const session = await detectUserSession();
+        // Compare with current loaded properties. If any have updated, push to database
+        const didSessionChange = 
+          session.ipAddress !== liveUser.ipAddress ||
+          session.country !== liveUser.country ||
+          session.browser !== liveUser.browser ||
+          session.device !== liveUser.device;
+          
+        if (didSessionChange) {
+          const updatedUser: UserState = {
+            ...liveUser,
+            ipAddress: session.ipAddress,
+            country: session.country,
+            browser: session.browser,
+            device: session.device
+          };
+          // Save updated session state to persistent Firestore DB & cache
+          await saveUserProfile(liveUser.uid, updatedUser);
+          // Set local component user state
+          setUser(updatedUser);
+          console.log("Logged dynamic client session telemetry:", session);
+        }
+      } catch (checkErr) {
+        console.warn("Client session audit trace bypassed:", checkErr);
+      }
+    };
+
+    // Delay lookup by 2.2 seconds to prevent layout block during heavy bootup
+    const timer = setTimeout(() => {
+      runDeviceDetectionCheck();
+    }, 2200);
+
+    return () => clearTimeout(timer);
+  }, [liveUser.uid, liveUser.isLoggedIn]);
 
   const [activePlanSelectionId, setActivePlanSelectionId] = useState<string>('plan_84h');
 

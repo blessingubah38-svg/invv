@@ -74,7 +74,14 @@ export async function dbSaveUserProfile(uid: string, profile: UserState): Promis
       ethereum: profile.wallets?.ethereum || '',
       usdtErc20: profile.wallets?.usdtErc20 || '',
       profilePhoto: profile.profilePhoto || '',
-      suspended: !!profile.suspended
+      suspended: !!profile.suspended,
+      ipAddress: profile.ipAddress || '',
+      browser: profile.browser || '',
+      device: profile.device || '',
+      country: profile.country || '',
+      referredBy: profile.referredBy || '',
+      referralsCount: Number(profile.referralsCount) || 0,
+      referralEarnings: Number(profile.referralEarnings) || 0
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -114,7 +121,14 @@ export async function dbFetchUserProfile(uid: string): Promise<UserState | null>
         totalDeposit: Number(data.totalDeposit) || 0,
         lastWithdrawal: data.lastWithdrawal !== undefined ? data.lastWithdrawal : '0',
         profilePhoto: data.profilePhoto || '',
-        suspended: !!data.suspended
+        suspended: !!data.suspended,
+        ipAddress: data.ipAddress || '',
+        browser: data.browser || '',
+        device: data.device || '',
+        country: data.country || '',
+        referredBy: data.referredBy || '',
+        referralsCount: Number(data.referralsCount) || 0,
+        referralEarnings: Number(data.referralEarnings) || 0
       };
     }
     return null;
@@ -122,6 +136,79 @@ export async function dbFetchUserProfile(uid: string): Promise<UserState | null>
     handleFirestoreError(error, OperationType.GET, path);
     return null;
   }
+}
+
+/**
+ * Real-time Firebase listener for a specific user profile
+ */
+export function subscribeToUserProfile(
+  uid: string,
+  onNext: (profile: UserState | null) => void,
+  onError?: (err: Error) => void
+) {
+  if (!isFirebaseReady) {
+    // If not ready, trigger with local mock if stored, otherwise null
+    const cached = localStorage.getItem(`user_profile_${uid}`);
+    if (cached) {
+      try {
+        onNext(JSON.parse(cached));
+      } catch (e) {
+        onNext(null);
+      }
+    } else {
+      onNext(null);
+    }
+    return () => {};
+  }
+  const path = `users/${uid}`;
+  const docRef = doc(db, 'users', uid);
+
+  return onSnapshot(docRef, (snap) => {
+    if (snap.exists()) {
+      const data = snap.data();
+      const profile: UserState = {
+        uid,
+        isLoggedIn: true,
+        username: data.username || '',
+        fullName: data.fullName || '',
+        email: data.email || '',
+        wallets: {
+          usdtTrc20: data.usdtTrc20 || '',
+          bitcoin: data.bitcoin || '',
+          ethereum: data.ethereum || '',
+          usdtErc20: data.usdtErc20 || ''
+        },
+        accountBalance: Number(data.accountBalance) || 0,
+        earnedTotal: Number(data.earnedTotal) || 0,
+        pendingWithdrawal: Number(data.pendingWithdrawal) || 0,
+        totalWithdrew: Number(data.totalWithdrew) || 0,
+        activeDeposit: Number(data.activeDeposit) || 0,
+        lastDeposit: Number(data.lastDeposit) || 0,
+        totalDeposit: Number(data.totalDeposit) || 0,
+        lastWithdrawal: data.lastWithdrawal !== undefined ? data.lastWithdrawal : '0',
+        profilePhoto: data.profilePhoto || '',
+        suspended: !!data.suspended,
+        ipAddress: data.ipAddress || '',
+        browser: data.browser || '',
+        device: data.device || '',
+        country: data.country || '',
+        referredBy: data.referredBy || '',
+        referralsCount: Number(data.referralsCount) || 0,
+        referralEarnings: Number(data.referralEarnings) || 0
+      };
+      // Cache locally
+      localStorage.setItem(`user_profile_${uid}`, JSON.stringify(profile));
+      onNext(profile);
+    } else {
+      onNext(null);
+    }
+  }, (err) => {
+    try {
+      handleFirestoreError(err, OperationType.GET, path);
+    } catch (finalErr: any) {
+      if (onError) onError(finalErr);
+    }
+  });
 }
 
 /**
@@ -721,4 +808,67 @@ export async function dbDeleteUserProfile(uid: string): Promise<void> {
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, path);
   }
+}
+
+/**
+ * Adds a permanently deleted/suspended user to global blacklist
+ */
+export async function dbAddUserToBlacklist(uid: string, username?: string, email?: string): Promise<void> {
+  if (!isFirebaseReady) return;
+  const path = `blacklist/${uid}`;
+  try {
+    const docRef = doc(db, 'blacklist', uid);
+    await setDoc(docRef, {
+      uid,
+      username: username?.toLowerCase().trim() || '',
+      email: email?.toLowerCase().trim() || '',
+      blacklistedAt: Date.now()
+    });
+  } catch (err) {
+    console.warn("Failed saving user to blacklist in Firebase:", err);
+  }
+}
+
+/**
+ * Checks if a user status is blacklisted
+ */
+export async function dbIsUserBlacklisted(uid: string, username?: string, email?: string): Promise<boolean> {
+  if (!isFirebaseReady) {
+    // Local fallback check
+    const localBL = localStorage.getItem('local_blacklist') || '[]';
+    try {
+      const parsedBL = JSON.parse(localBL);
+      return parsedBL.some((item: any) => 
+        item.uid === uid || 
+        (username && item.username === username.toLowerCase().trim()) ||
+        (email && item.email === email.toLowerCase().trim())
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    // 1. Check direct UID reference
+    const docRef = doc(db, 'blacklist', uid);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) return true;
+
+    // 2. Check if username is blacklisted
+    if (username) {
+      const qUsr = query(collection(db, 'blacklist'), where('username', '==', username.toLowerCase().trim()));
+      const snapUsr = await getDocs(qUsr);
+      if (!snapUsr.empty) return true;
+    }
+
+    // 3. Check if email is blacklisted
+    if (email) {
+      const qEml = query(collection(db, 'blacklist'), where('email', '==', email.toLowerCase().trim()));
+      const snapEml = await getDocs(qEml);
+      if (!snapEml.empty) return true;
+    }
+  } catch (err) {
+    console.warn("Error querying blacklist status:", err);
+  }
+  return false;
 }

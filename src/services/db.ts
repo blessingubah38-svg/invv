@@ -15,13 +15,16 @@ import {
   dbGetSystemSettings,
   subscribeToAllUsers,
   subscribeToAllTransactions,
+  subscribeToUserProfile,
   dbSaveSystemSettings,
   dbSaveInvestmentPlan,
   dbDeleteInvestmentPlan,
-  dbDeleteUserProfile
+  dbDeleteUserProfile,
+  dbAddUserToBlacklist,
+  dbIsUserBlacklisted
 } from './firebaseService';
 
-export { isFirebaseReady, subscribeToAllUsers, subscribeToAllTransactions };
+export { isFirebaseReady, subscribeToAllUsers, subscribeToAllTransactions, subscribeToUserProfile, dbIsUserBlacklisted as isUserBlacklisted };
 
 /**
  * Creates default mockup state for fresh user profiles
@@ -448,12 +451,28 @@ export async function saveSystemSettings(settings: any): Promise<void> {
 
 export async function syncLocalDataToFirebase(uid: string, username: string): Promise<void> {}
 
-export async function deleteUserProfile(uid: string): Promise<void> {
+export async function deleteUserProfile(uid: string, username?: string, email?: string): Promise<void> {
   if (isFirebaseReady) {
     try {
       await dbDeleteUserProfile(uid);
+      await dbAddUserToBlacklist(uid, username, email);
     } catch (error) {
       console.warn("Failed deleting user from Firebase:", error);
+    }
+  } else {
+    // Local fallback blacklist storage
+    try {
+      const localBL = localStorage.getItem('local_blacklist') || '[]';
+      const parsedBL = JSON.parse(localBL);
+      parsedBL.push({
+        uid,
+        username: username?.toLowerCase().trim() || '',
+        email: email?.toLowerCase().trim() || '',
+        blacklistedAt: Date.now()
+      });
+      localStorage.setItem('local_blacklist', JSON.stringify(parsedBL));
+    } catch (e) {
+      console.warn("Failed caching local blacklist:", e);
     }
   }
   localStorage.removeItem(`user_profile_${uid}`);

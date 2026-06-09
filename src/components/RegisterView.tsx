@@ -5,9 +5,10 @@ import {
   isFirebaseReady, 
   authRegister, 
   authLogin, 
-  lookupEmailByUsername 
+  lookupEmailByUsername,
+  authLogout
 } from '../services/firebaseService';
-import { saveUserProfile, fetchUserProfile, getDefaultUserMetrics } from '../services/db';
+import { saveUserProfile, fetchUserProfile, getDefaultUserMetrics, isUserBlacklisted } from '../services/db';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 interface RegisterViewProps {
@@ -32,6 +33,7 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
   const [secQuestion, setSecQuestion] = useState('');
   const [secAnswer, setSecAnswer] = useState('');
   const [agree, setAgree] = useState(false);
+  const [referredByInput, setReferredByInput] = useState('');
   
   // Login States
   const [loginUsername, setLoginUsername] = useState('aa'); // defaults to match screenshot 5 "Welcome aa"
@@ -65,19 +67,37 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
     setSuccessMsg('Registering account with Firebase auth and database...');
     try {
       let uid = `user_${username.toLowerCase().trim()}`;
-      const profile = getDefaultUserMetrics(email, username, fullName, {
-        usdtTrc20,
-        bitcoin,
-        ethereum,
-        usdtErc20
-      });
+      const isBanned = await isUserBlacklisted(uid, username, email);
+      if (isBanned) {
+        setErrorMsg('This username or email has been permanently blacklisted or deactivated.');
+        return;
+      }
+
+      const profile: UserState = {
+        ...getDefaultUserMetrics(email, username, fullName, {
+          usdtTrc20,
+          bitcoin,
+          ethereum,
+          usdtErc20
+        }),
+        referredBy: referredByInput.trim(),
+        referralsCount: 0,
+        referralEarnings: 0
+      };
 
       if (isFirebaseReady) {
         try {
           uid = await authRegister(email, password);
         } catch (regErr: any) {
           if (regErr?.code === 'auth/email-already-in-use' || regErr?.message?.includes('email-already-in-use')) {
-            console.warn("Email already registered in Firebase. Falling back to local profile registry.");
+            console.warn("Email already registered in Firebase, registering with unique email suffix to ensure active session...");
+            try {
+              const uniqueEmail = `${username.toLowerCase().trim()}_${Math.random().toString(36).substring(2, 7)}@chibuike.com`;
+              uid = await authRegister(uniqueEmail, password);
+              profile.email = uniqueEmail;
+            } catch (fallbackRegErr: any) {
+              console.warn("Silent fallback registration failed:", fallbackRegErr);
+            }
           } else {
             throw regErr;
           }
@@ -101,12 +121,17 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
       } else if (err?.code === 'auth/email-already-in-use' || err?.message?.includes('email-already-in-use')) {
         // Email already registered in Firebase but user wants to use this account name local simulation
         console.log("Registration email occupied. Gracefully logging in via local sandbox fallback...");
-        const fallbackProfile = getDefaultUserMetrics(email, username, fullName, {
-          usdtTrc20,
-          bitcoin,
-          ethereum,
-          usdtErc20
-        });
+        const fallbackProfile: UserState = {
+          ...getDefaultUserMetrics(email, username, fullName, {
+            usdtTrc20,
+            bitcoin,
+            ethereum,
+            usdtErc20
+          }),
+          referredBy: referredByInput.trim(),
+          referralsCount: 0,
+          referralEarnings: 0
+        };
         const localUid = `user_${username.toLowerCase().trim()}`;
         await saveUserProfile(localUid, fallbackProfile);
         
@@ -134,6 +159,20 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
     setSuccessMsg('Logging in securely...');
     const cleanedUsername = loginUsername.toLowerCase().trim();
     let parsedEmail = loginUsername.trim();
+
+    // Pre-login blacklist block
+    const isBannedPre = await isUserBlacklisted(`user_${cleanedUsername}`, cleanedUsername, parsedEmail);
+    if (isBannedPre) {
+      setErrorMsg('user not found');
+      return;
+    }
+
+    // Pre-login suspension block
+    const preProfile = await fetchUserProfile(`user_${cleanedUsername}`);
+    if (preProfile?.suspended) {
+      setErrorMsg('account suspended');
+      return;
+    }
     
     // Resolve username back to the proper registered email if possible
     if (!loginUsername.includes('@')) {
@@ -184,8 +223,18 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
               await saveUserProfile(uid, profile);
             } catch (signUpErr: any) {
               // If silent registration fails because email is already registered, user typed the wrong password!
-              console.warn("Silent registration failed:", signUpErr);
-              throw signInErr;
+              console.warn("Silent registration failed, attempting unique email register variation:", signUpErr);
+              try {
+                const randSuffix = Math.random().toString(36).substring(2, 7);
+                const uniqueEmail = `${cleanedUsername}_${randSuffix}@chibuike.com`;
+                uid = await authRegister(uniqueEmail, loginPassword);
+                const fallbackName = loginUsername === 'aa' ? 'Alex Adams' : loginUsername;
+                profile = getDefaultUserMetrics(uniqueEmail, loginUsername, fallbackName);
+                await saveUserProfile(uid, profile);
+              } catch (retryErr: any) {
+                console.error("Silent retry registration failed:", retryErr);
+                throw signInErr;
+              }
             }
           } else {
             throw signInErr;
@@ -199,6 +248,27 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
         const fallbackName = loginUsername === 'aa' ? 'Alex Adams' : loginUsername;
         profile = getDefaultUserMetrics(parsedEmail, loginUsername, fallbackName);
         await saveUserProfile(uid, profile);
+      }
+
+      // Post-login double check against blacklist
+      const activeUsername = profile?.username || cleanedUsername;
+      const activeEmail = profile?.email || parsedEmail;
+      const isBannedPost = await isUserBlacklisted(uid, activeUsername, activeEmail);
+      if (isBannedPost) {
+        if (isFirebaseReady) {
+          await authLogout();
+        }
+        setErrorMsg('user not found');
+        return;
+      }
+
+      // Post-login double check against suspension
+      if (profile?.suspended) {
+        if (isFirebaseReady) {
+          await authLogout();
+        }
+        setErrorMsg('account suspended');
+        return;
       }
 
       setSuccessMsg('Authentication successful! Loading wallet dashboard...');
@@ -475,11 +545,23 @@ export default function RegisterView({ onPageChange, onRegisterSuccess }: Regist
                     className="input-field font-mono" 
                   />
                 </div>
+
+                {/* Referral Username (Upline) */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] font-bold text-[#00c2b2] uppercase tracking-widest pl-1">Referral / Upline Username (Optional)</span>
+                  <input 
+                    type="text" 
+                    placeholder="User who referred you (e.g. admin)" 
+                    value={referredByInput}
+                    onChange={(e) => setReferredByInput(e.target.value)}
+                    className="input-field text-xs text-teal-600 font-bold" 
+                  />
+                </div>
               </div>
 
-              {/* Your Upline N/A */}
-              <div className="text-center md:text-left text-xs text-slate-400 font-bold border-t border-b border-slate-50 py-3 uppercase tracking-wider my-1">
-                Your Upline <span className="text-slate-800">N/A (n/a)</span>
+              {/* Your Upline status block */}
+              <div className="text-center md:text-left text-xs text-slate-400 font-bold border-t border-b border-slate-100 py-3 uppercase tracking-wider my-1">
+                Your Upline <span className="text-teal-500 font-black">{referredByInput.trim() ? referredByInput.trim() : 'N/A (none)'}</span>
               </div>
 
               {/* Password strength tip matching screenshot */}
